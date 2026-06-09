@@ -1,0 +1,663 @@
+---
+title: "Where Does the Money Go?"
+subtitle: "A Decade of Medicare Spending"
+format:
+  closeread-html:
+    cr-section:
+      layout: "overlay-center"
+    css: medicare.css
+    embed-resources: true
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(scales)
+library(ggplot2)
+library(maps)
+library(mapproj)
+library(viridis)
+library(ggridges)
+library(treemapify)
+
+gv <- read_csv(
+  "2014-2024 Original Medicare Geographic Variation Public Use File.csv",
+  col_types = cols(BENE_GEO_CD = col_character()),
+  show_col_types = FALSE
+)
+
+national  <- gv |> filter(BENE_GEO_LVL == "National", BENE_AGE_LVL == "All")
+state_all <- gv |> filter(BENE_GEO_LVL == "State",    BENE_AGE_LVL == "All")
+
+spending_long <- national |>
+  select(YEAR,
+         Inpatient         = IP_MDCR_PYMT_PCT,
+         Outpatient        = OP_MDCR_PYMT_PCT,
+         `Skilled Nursing` = SNF_MDCR_PYMT_PCT,
+         `Home Health`     = HH_MDCR_PYMT_PCT,
+         Hospice           = HOSPC_MDCR_PYMT_PCT,
+         `Amb. Surgery`    = ASC_MDCR_PYMT_PCT) |>
+  pivot_longer(-YEAR, names_to = "service", values_to = "pct") |>
+  mutate(pct = as.numeric(pct), YEAR = as.integer(YEAR))
+
+svc_colors <- c(
+  "Inpatient"        = "#2166ac",
+  "Outpatient"       = "#4dac26",
+  "Skilled Nursing"  = "#d01c8b",
+  "Home Health"      = "#f1a340",
+  "Hospice"          = "#998ec3",
+  "Amb. Surgery"     = "#41b6c4"
+)
+
+state_2024 <- state_all |>
+  filter(YEAR == 2024) |>
+  mutate(
+    region                    = tolower(BENE_GEO_DESC),
+    TOT_MDCR_STDZD_PYMT_PC    = as.numeric(TOT_MDCR_STDZD_PYMT_PC),
+    TOT_MDCR_PYMT_PC          = as.numeric(TOT_MDCR_PYMT_PC),
+    IP_MDCR_PYMT_PCT          = as.numeric(IP_MDCR_PYMT_PCT),
+    OP_MDCR_PYMT_PCT          = as.numeric(OP_MDCR_PYMT_PCT),
+    ER_VISITS_PER_1000_BENES   = as.numeric(ER_VISITS_PER_1000_BENES),
+    ACUTE_HOSP_READMSN_PCT    = as.numeric(ACUTE_HOSP_READMSN_PCT)
+  )
+
+theme_medicare <- function() {
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.background  = element_rect(fill = "#1c1c2e", color = NA),
+    panel.background = element_rect(fill = "#1c1c2e", color = NA),
+    panel.grid.major = element_line(color = "#2e2e4e"),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(5, 5, 5, 5),
+    legend.margin = margin(0, 0, 0, 0),
+    legend.box.margin = margin(0, 0, 0, 0),
+    text             = element_text(color = "#c8d4e8", family = "serif"),
+    axis.text        = element_text(color = "#a0b4cc"),
+    plot.title       = element_text(color = "#f0ede8", face = "bold", size = 14),
+    plot.subtitle    = element_text(color = "#7a9cc7", size = 11),
+    legend.background = element_rect(fill = "#1c1c2e", color = NA),
+    legend.text      = element_text(color = "#c8d4e8"),
+    legend.title     = element_text(color = "#a0b4cc")
+  )
+}
+```
+
+<!-- ── HERO ─────────────────────────────────────────────────────────────── -->
+
+```{=html}
+<div class="hero">
+  <img src="medicarespending.avif" />
+  <div>
+    <p class="hero-eyebrow">CMS Geographic Variation Data · 2014-2024 Authors: Tom Tran Nguyen and
+    Ariana Lewis</p>
+    <h1>Where Does<br>the Money Go?</h1>
+    <p class="hero-sub">A decade of Medicare spending - who gets it, where it goes, and how the map has changed.</p>
+    <p class="hero-body">Every year, Medicare writes checks totaling hundreds of billions of dollars to hospitals, nursing homes, home health agencies, surgeons, and ambulances. It covers about one in five Americans and accounts for a fifth of all U.S. healthcare spending. But the way that money gets divided up is not fixed. This is that story.</p>
+  </div>
+</div>
+```
+
+<!-- ── Graph 1: Total Medicare Payment per Beneficiary ───────────────────── -->
+:::{.cr-section layout="sidebar-left"}
+
+<div class="story-text">
+<p class="hero-eyebrow">Total Spending</p>
+<h2>The bill keeps growing.</h2>
+<p class="hero-body">In 2014, Medicare spent about <strong>$9,767 per beneficiary</strong>. By 2024, that number was <strong>$13,606</strong>, a <strong>39%</strong> jump in ten years. It happened even as policymakers were actively trying to slow it down.</p>
+</div>
+[@cr-total-spending]
+
+<div class="story-text">
+<p class="hero-eyebrow">COVID Effect</p>
+<h2>2020 was an outlier, not a turning point.</h2>
+<p class="hero-body">One exception was the year of the COVID pandemic, 2020. Procedures were cancelled, offices were closed, and people avoided hospitals even when they probably shouldn't have. Spending dropped. Then it snapped back the following year harder than it ever had.</p>
+</div>
+[@cr-total-spending]
+
+:::{#cr-total-spending}
+```{r}
+#| label: cr-total-spending
+#| fig-width: 7
+#| fig-height: 4.5
+#| warning: false
+national |>
+  mutate(YEAR = as.integer(YEAR),
+         TOT_MDCR_PYMT_PC = as.numeric(TOT_MDCR_PYMT_PC)) |>
+  ggplot(aes(x = YEAR, y = TOT_MDCR_PYMT_PC)) +
+  geom_area(fill = "#2166ac", alpha = 0.2) +
+  geom_line(color = "#4d9de0", linewidth = 1.6) +
+  geom_point(color = "#f0ede8", size = 3, stroke = 1.5, shape = 21, fill = "#2166ac") +
+  geom_vline(xintercept = 2020, linetype = "dashed", color = "#7a9cc7") +
+  annotate("text", x = 2020.2, y = 10400, label = "COVID-19",
+           hjust = 0, size = 3.5, color = "#7a9cc7") +
+  scale_y_continuous(labels = dollar_format()) +
+  scale_x_continuous(breaks = 2014:2024) +
+  labs(title = "Total Medicare Payment per Beneficiary",
+       subtitle = "2014-2024", x = NULL, y = NULL) +
+  theme_medicare()
+```
+:::
+
+:::
+
+<!-- ── Graph 2: Medicare Spending by Care Setting ─────────────────────────── -->
+:::{.cr-section layout="sidebar-left"}
+
+[@cr-stacked-area]
+
+<div class="story-text">
+<p class="hero-eyebrow">Spending Mix</p>
+<h2>Inpatient care is shrinking — slowly, but consistently.</h2>
+<p class="hero-body">In 2014, inpatient hospital care accounted for <strong>33 cents of every Medicare dollar</strong>. By 2024 it had fallen to <strong>28 cents</strong>. That may not sound dramatic, but in a program spending hundreds of billions of dollars each year, a five-point shift represents a massive redistribution of resources. The trend reflects a broader transformation in how care is delivered. Services that once required a hospital stay are increasingly being performed in outpatient settings.</p>
+</div>
+
+[@cr-stacked-area]
+
+<div class="story-text">
+<p class="hero-eyebrow">The Winner</p>
+<h2>Outpatient care keeps taking share.</h2>
+<p class="hero-body">While inpatient spending has steadily declined, outpatient care has moved in the opposite direction. Its share grew from <strong>13.5%</strong> in 2014 to <strong>18.8%</strong> in 2024, making it one of the fastest-growing components of Medicare spending. These changes reflect years of payment reform and policy incentives designed to shift care away from hospitals and toward lower-cost settings. Since the Affordable Care Act, Medicare has increasingly rewarded outpatient treatment and penalized avoidable inpatient utilization.</p>
+</div>
+
+:::{#cr-stacked-area}
+```{r}
+#| label: cr-stacked-area
+#| fig-width: 7
+#| fig-height: 4.5
+#| warning: false
+#| message: false
+spending_long |>
+  ggplot(aes(x = YEAR, y = pct, fill = service)) +
+  geom_area(alpha = 0.85, position = "stack") +
+  scale_fill_manual(values = svc_colors) +
+  scale_y_continuous(labels = percent_format()) +
+  scale_x_continuous(breaks = 2014:2024) +
+  labs(
+    title = "Medicare Spending by Care Setting",
+    subtitle = "Share of total spending, 2014–2024",
+    x = NULL, y = NULL, fill = NULL
+  ) +
+  theme_medicare() +
+  theme(legend.position = "bottom")
+```
+:::
+
+:::
+
+<!-- ── Graph 3: Spending Share by Service Type ────────────────────────────── -->
+:::{.cr-section layout="sidebar-left"}
+
+[@cr-facet]
+
+<div class="story-text">
+<p class="hero-eyebrow">By Service Type</p>
+<h2>Each setting has its own trajectory.</h2>
+<p class="hero-body">Looking only at total spending can hide important differences between care settings. When each service is viewed separately, the patterns become much clearer. Some categories are steadily gaining share, others are clearly declining, and a few show volatile, unpredictable patterns.</p>
+</div>
+
+[@cr-facet]
+
+<div class="story-text">
+<p class="hero-eyebrow">Nothing Is Standing Still</p>
+<h2>Every setting is in motion.</h2>
+<p class="hero-body">None of them are standing still. Medicare spending is constantly being reshaped as technology, provider behavior, and payment policy influence where and how care is delivered.</p>
+</div>
+[@cr-facet]
+
+:::{#cr-facet}
+```{r}
+#| label: cr-facet
+#| fig-width: 8
+#| fig-height: 5.5
+#| warning: false
+spending_long |>
+  ggplot(aes(x = YEAR, y = pct, color = service)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  scale_color_manual(values = svc_colors) +
+  scale_y_continuous(labels = percent_format()) +
+  scale_x_continuous(breaks = c(2014, 2018, 2024)) +
+  facet_wrap(~service, scales = "free_y") +
+  labs(title = "Spending Share by Service Type",
+       subtitle = "Each setting on its own scale, 2014-2024",
+       x = NULL, y = NULL) +
+  theme_medicare() +
+  theme(legend.position = "none",
+        strip.text = element_text(color = "#f0ede8", face = "bold"))
+```
+:::
+
+:::
+
+<!-- ── Graph 4: TREEMAP: Medicare Spending Allocation, 2024 ──────────────── -->
+:::{.cr-section layout="sidebar-left"}
+
+[@cr-treemap]
+
+<div class="story-text">
+<p class="hero-eyebrow">2024 Snapshot</p>
+<h2>Where every dollar went in 2024.</h2>
+<p class="hero-body">Even after a decade of change, <strong>inpatient</strong> care remains the largest single component of Medicare spending. Outpatient services now account for nearly <strong>19 cents of every Medicare dollar</strong>, not far behind inpatient care, which still leads at <strong>28 cents</strong>.</p>
+</div>
+
+[@cr-treemap]
+
+<div class="story-text">
+<p class="hero-eyebrow">The Rest</p>
+<h2>Every other setting plays a smaller role.</h2>
+<p class="hero-body">Skilled nursing facilities have been reduced to roughly <strong>six cents of every Medicare dollar</strong>. Home health and hospice together account for <strong>less than eight percent</strong> of spending, while ambulatory surgery centers continue to grow from a small base.</p>
+</div>
+[@cr-treemap]
+
+:::{#cr-treemap}
+```{r}
+#| label: cr-treemap
+#| fig-width: 10
+#| fig-height: 5
+#| warning: false
+spending_long |>
+  filter(YEAR == 2024) |>
+  mutate(label = paste0(service, "\n", percent(pct, accuracy = 0.1))) |>
+  ggplot(aes(area = pct, fill = service, label = label)) +
+  geom_treemap() +
+  geom_treemap_text(colour = "white", place = "centre", size = 12, fontface = "bold") +
+  scale_fill_manual(values = svc_colors) +
+  labs(title = "Medicare Spending Allocation, 2024") +
+  theme_medicare() +
+  theme(legend.position = "none")
+```
+:::
+
+:::
+
+<!-- ── Graph 5: Standardized Medicare Spending by State, 2024 ────────────── -->
+:::{.cr-section layout="sidebar-left"}
+
+[@cr-choropleth]
+
+<div class="story-text">
+<p class="hero-eyebrow">Geography</p>
+<h2>Where you live determines what Medicare spends on you.</h2>
+<p class="hero-body">Medicare is a national program, but spending patterns differ depending on what state you live in. A beneficiary in Minnesota costs the program much less than a beneficiary in Louisiana or New Jersey, even after we adjust for differences in local healthcare prices.</p>
+</div>
+
+[@cr-choropleth]
+
+<div class="story-text">
+<p class="hero-eyebrow">More Care, Not Better Care</p>
+<h2>Higher spending doesn't mean better outcomes.</h2>
+<p class="hero-body">These gaps are not the result of one population being healthier than another. The differences are how healthcare is delivered. How often patients are admitted, which services are utilized, and how providers respond to local medical culture and incentives.</p>
+</div>
+[@cr-choropleth]
+
+:::{#cr-choropleth}
+```{r}
+#| label: cr-choropleth
+#| fig-width: 14
+#| fig-height: 8
+#| dev: "png"
+#| dpi: 180
+#| warning: false
+us_states <- map_data("state")
+
+state_2024_map <- state_all |>
+  filter(YEAR == 2024, BENE_AGE_LVL == "All", BENE_GEO_LVL == "State") |>
+  mutate(
+    TOT_MDCR_STDZD_PYMT_PC = as.numeric(TOT_MDCR_STDZD_PYMT_PC),
+    region = tolower(state.name[match(BENE_GEO_DESC, state.abb)])
+  ) |>
+  filter(!is.na(region))
+
+map_joined <- us_states |> left_join(state_2024_map, by = "region")
+
+ggplot(map_joined, aes(x = long, y = lat, group = group,
+                        fill = TOT_MDCR_STDZD_PYMT_PC)) +
+  geom_polygon(color = "#2e2e4e", linewidth = 0.3) +
+  coord_map("albers", lat0 = 39, lat1 = 45) +
+  scale_fill_viridis_c(option = "plasma", labels = dollar_format(),
+                       name = "Std. $/Benefit", na.value = "#2e2e4e") +
+  labs(title = "Standardized Medicare Spending by State, 2024",
+       subtitle = "Where you live determines what Medicare spends on you") +
+  theme_void() +
+  theme(
+    plot.background = element_rect(fill = "#1c1c2e", color = NA),
+    plot.title = element_text(color = "#f0ede8", face = "bold",
+                              size = 16, family = "serif", margin = margin(b = 6)),
+    plot.subtitle = element_text(color = "#7a9cc7", size = 12, margin = margin(b = 10)),
+    legend.text  = element_text(color = "#c8d4e8"),
+    legend.title = element_text(color = "#a0b4cc"),
+    plot.margin = margin(30, 30, 30, 30)
+  )
+```
+:::
+
+:::
+
+<!-- ── Graph 6: HEATMAP. Medicare Standardized Spending per Beneficiary by State, 2014–2024 ── -->
+:::{.cr-section layout="sidebar-left"}
+
+[@cr-heatmap]
+
+<div class="story-text">
+<p class="hero-eyebrow">State Trends Over Time</p>
+<h2>The geography of spending hasn't changed much in a decade.</h2>
+<p class="hero-body">Some states have always cost more. The choropleth showed you where spending lands in 2024. This shows you that the pattern isn't new. <strong>Florida, Louisiana, and Texas</strong> have sat at the top of Medicare spending for the entire decade, not because of a single bad year, but because of something <strong>structural</strong> about how care is delivered there.</p>
+</div>
+
+[@cr-heatmap]
+
+<div class="story-text">
+<p class="hero-eyebrow">The Other End</p>
+<h2>Some states have always spent less.</h2>
+<p class="hero-body">Meanwhile, <strong>Hawaii, Vermont, and Minnesota</strong> have stayed at the bottom. The <strong>gap</strong> between the highest and lowest-spending states has <strong>barely</strong> narrowed. A Medicare beneficiary in Florida costs the program <strong>nearly twice</strong> what one in Hawaii does, and that has been true since 2014.</p>
+</div>
+[@cr-heatmap]
+
+:::{#cr-heatmap}
+```{r}
+#| label: cr-heatmap
+#| fig-width: 12
+#| fig-height: 10
+#| warning: false
+#| message: false
+state_all |>
+  filter(
+    BENE_AGE_LVL == "All",
+    BENE_GEO_LVL == "State",
+    !is.na(BENE_GEO_DESC)
+  ) |>
+  mutate(TOT_MDCR_STDZD_PYMT_PC = as.numeric(TOT_MDCR_STDZD_PYMT_PC)) |>
+  filter(!is.na(TOT_MDCR_STDZD_PYMT_PC)) |>
+  ggplot(aes(x = factor(YEAR), y = reorder(BENE_GEO_DESC, TOT_MDCR_STDZD_PYMT_PC),
+             fill = TOT_MDCR_STDZD_PYMT_PC)) +
+  geom_tile(color = "#1c1c2e", linewidth = 0.3) +
+  scale_fill_viridis_c(option = "plasma", labels = dollar_format(),
+                       name = "Std. $/Bene") +
+  labs(
+    title = "Medicare Standardized Spending per Beneficiary by State, 2014–2024",
+    subtitle = "States sorted by average spending — southern states consistently highest",
+    x = NULL, y = NULL
+  ) +
+  theme_medicare() +
+  theme(
+    axis.text.y = element_text(size = 7),
+    axis.text.x = element_text(size = 9),
+    panel.grid = element_blank(),
+    legend.position = "right"
+  )
+```
+:::
+
+:::
+
+<!-- ── Graph 7: Inpatient vs. Outpatient Spending Share by State, 2024 ───── -->
+:::{.cr-section layout="sidebar-left"}
+
+[@cr-scatter-ip]
+
+<div class="story-text">
+<p class="hero-eyebrow">State Comparison</p>
+<h2>The inpatient-to-outpatient shift isn't even.</h2>
+<p class="hero-body">While Medicare has been moving away from inpatient care, the pace of that transition differs from state to state. Some regions have started to use outpatient delivery models more frequently, while others continue to rely on traditional hospital-based care. These differences help explain why spending levels vary across the country.</p>
+</div>
+
+[@cr-scatter-ip]
+
+<div class="story-text">
+<p class="hero-eyebrow">Reading the Bubbles</p>
+<h2>Size reveals total cost.</h2>
+<p class="hero-body">In the chart, each bubble represents a state. Position shows the balance between inpatient and outpatient spending. Bubble size reflects total Medicare spending per beneficiary. This reveals which states are both high spending and heavily reliant on hospitals.</p>
+</div>
+[@cr-scatter-ip]
+
+:::{#cr-scatter-ip}
+```{r}
+#| label: cr-scatter-ip
+#| fig-width: 10
+#| fig-height: 5
+#| warning: false
+state_2024 |>
+  filter(!is.na(IP_MDCR_PYMT_PCT), !is.na(OP_MDCR_PYMT_PCT)) |>
+  ggplot(aes(x = IP_MDCR_PYMT_PCT, y = OP_MDCR_PYMT_PCT,
+             size = TOT_MDCR_PYMT_PC, label = BENE_GEO_DESC)) +
+  geom_point(alpha = 0.7, color = "#4d9de0") +
+  geom_text(size = 2.3, vjust = -0.9, color = "#c8d4e8", check_overlap = TRUE) +
+  scale_x_continuous(labels = percent_format()) +
+  scale_y_continuous(labels = percent_format()) +
+  scale_size_continuous(labels = dollar_format(), name = "$/Benefit") +
+  labs(title = "Inpatient vs. Outpatient Spending Share by State, 2024",
+       x = "Inpatient Share", y = "Outpatient Share") +
+  theme_medicare()
+```
+:::
+
+:::
+
+<!-- ── Graph 8: Average Medicare Payment per User, 2024 ──────────────────── -->
+:::{.cr-section layout="sidebar-left"}
+
+[@cr-per-user]
+
+<div class="story-text">
+<p class="hero-eyebrow">Per-User Cost</p>
+<h2>Aggregate shares can be misleading.</h2>
+<p class="hero-body">A service may account for a small portion of overall spending simply because few beneficiaries use it, not because it is inexpensive. When viewed per user, the cost differences between settings become much more dramatic.</p>
+</div>
+
+[@cr-per-user]
+
+<div class="story-text">
+<p class="hero-eyebrow">The Standout</p>
+<h2>One admission costs more than dozens of outpatient visits.</h2>
+<p class="hero-body">Inpatient care stands out immediately. In practical terms, <strong>one avoided hospital admission can offset the cost of dozens of outpatient visits</strong>. That is why efforts to reduce unnecessary admissions remain one of the most powerful tools for controlling healthcare spending.</p>
+</div>
+[@cr-per-user]
+
+:::{#cr-per-user}
+```{r}
+#| label: cr-per-user
+#| fig-width: 7
+#| fig-height: 4.5
+#| warning: false
+national |>
+  filter(YEAR == 2024) |>
+  select(Inpatient = IP_MDCR_PYMT_PER_USER, Outpatient = OP_MDCR_PYMT_PER_USER,
+         `Skilled Nursing` = SNF_MDCR_PYMT_PER_USER,
+         `Home Health` = HH_MDCR_PYMT_PER_USER,
+         Hospice = HOSPC_MDCR_PYMT_PER_USER,
+         `Amb. Surgery` = ASC_MDCR_PYMT_PER_USER) |>
+  pivot_longer(everything(), names_to = "service", values_to = "cost") |>
+  mutate(cost = as.numeric(cost)) |>
+  filter(!is.na(cost)) |>
+  ggplot(aes(x = reorder(service, cost), y = cost, fill = service)) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = dollar(cost, accuracy = 1)),
+            hjust = -0.1, size = 3.5, color = "#c8d4e8") +
+  coord_flip() +
+  scale_fill_manual(values = svc_colors) +
+  scale_y_continuous(labels = dollar_format(), expand = expansion(mult = c(0, 0.25))) +
+  labs(title = "Average Medicare Payment per User, 2024", x = NULL, y = NULL) +
+  theme_medicare() +
+  theme(legend.position = "none")
+```
+:::
+
+:::
+
+<!-- ── Graph 9: State Spending Distribution, Selected Years ──────────────── -->
+:::{.cr-section layout="sidebar-left"}
+
+[@cr-ridgeline]
+
+<div class="story-text">
+<p class="hero-eyebrow">Spending Distribution</p>
+<h2>The gap between states is widening.</h2>
+<p class="hero-body">While Medicare spending increased nationwide, the distribution of state level spending became more dispersed. In 2014, most states were clustered within a narrow range of spending levels.</p>
+</div>
+
+[@cr-ridgeline]
+
+<div class="story-text">
+<p class="hero-eyebrow">Spreading Apart</p>
+<h2>By 2024, the spread had grown.</h2>
+<p class="hero-body">By 2024, spending shifted upward and spread across a wider range. This indicates larger differences in Medicare spending between states. Where beneficiaries live continues to play a significant role in how much care costs the program.</p>
+</div>
+[@cr-ridgeline]
+
+:::{#cr-ridgeline}
+```{r}
+#| label: cr-ridgeline
+#| fig-width: 10
+#| fig-height: 5
+#| warning: false
+#| message: false
+state_all |>
+  filter(YEAR %in% c(2014, 2016, 2018, 2020, 2022, 2024)) |>
+  mutate(TOT_MDCR_PYMT_PC = as.numeric(TOT_MDCR_PYMT_PC), YEAR = factor(YEAR)) |>
+  filter(!is.na(TOT_MDCR_PYMT_PC)) |>
+  ggplot(aes(x = TOT_MDCR_PYMT_PC, y = YEAR, fill = YEAR)) +
+  geom_density_ridges(alpha = 0.7, scale = 1.2, color = "#2e2e4e") +
+  scale_x_continuous(labels = dollar_format()) +
+  scale_fill_viridis_d(option = "mako", direction = -1) +
+  labs(title = "State Spending Distribution, Selected Years",
+       x = "Total Medicare Payment per Beneficiary", y = NULL) +
+  theme_medicare() +
+  theme(legend.position = "none")
+```
+:::
+
+:::
+
+<!-- ── Graph 10: ER Visit Rate vs. Standardized Spending, 2024 ───────────── -->
+:::{.cr-section layout="sidebar-left"}
+
+[@cr-er]
+
+<div class="story-text">
+<p class="hero-eyebrow">Emergency Room</p>
+<h2>High ER use is a system efficiency problem.</h2>
+<p class="hero-body">States with high emergency room utilization rates do not simply spend more on emergency services, they often spend more across the healthcare system as a whole. High ER use signals barriers to primary care, limited access to preventive services, or inefficiencies in care coordination.</p>
+</div>
+
+[@cr-er]
+
+<div class="story-text">
+<p class="hero-eyebrow">A Useful Indicator</p>
+<h2>ER rates signal something deeper.</h2>
+<p class="hero-body">Because of this relationship, ER visit rates are frequently used by actuaries and health policy researchers as an indicator of system performance. The trend line makes the pattern clear: states with more ER visits per beneficiary consistently show higher overall standardized spending.</p>
+</div>
+[@cr-er]
+
+:::{#cr-er}
+```{r}
+#| label: cr-er
+#| fig-width: 7
+#| fig-height: 4.5
+#| warning: false
+#| message: false
+state_2024 |>
+  filter(!is.na(ER_VISITS_PER_1000_BENES), !is.na(TOT_MDCR_STDZD_PYMT_PC)) |>
+  ggplot(aes(x = ER_VISITS_PER_1000_BENES, y = TOT_MDCR_STDZD_PYMT_PC,
+             label = BENE_GEO_DESC)) +
+  geom_point(color = "#d01c8b", size = 3, alpha = 0.75) +
+  geom_smooth(method = "lm", se = TRUE, color = "#7a9cc7",
+              fill = "#2e2e4e", linewidth = 0.8) +
+  geom_text(size = 2.5, vjust = -0.8, color = "#c8d4e8", check_overlap = TRUE) +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(title = "ER Visit Rate vs. Standardized Spending, 2024",
+       x = "ER Visits per 1,000 Beneficiaries",
+       y = "Standardized Spending per Beneficiary") +
+  theme_medicare()
+```
+:::
+
+:::
+
+<!-- ── Graph 11: Hospital Readmission Rates by State ─────────────────────── -->
+:::{.cr-section layout="sidebar-left"}
+
+[@cr-readmit]
+
+<div class="story-text">
+<p class="hero-eyebrow">Readmissions</p>
+<h2>Coming back too soon.</h2>
+<p class="hero-body">Readmissions are costly for both patients and Medicare. In many cases, they're viewed as indicators of gaps in care coordination, discharge planning, or follow-up treatment. The gap between the best and worst performing states is substantial.</p>
+</div>
+
+[@cr-readmit]
+
+<div class="story-text">
+<p class="hero-eyebrow">Policy Response</p>
+<h2>Penalties have helped, but progress is uneven.</h2>
+<p class="hero-body">Since 2012, Medicare's Hospital Readmissions Reduction Program imposed financial penalties on hospitals with excessive readmission rates. Nationally, the policy has helped reduce the frequency of readmission, but progress hasn't been uniform across the country.</p>
+</div>
+[@cr-readmit]
+
+:::{#cr-readmit}
+```{r}
+#| label: cr-readmit
+#| fig-width: 10
+#| fig-height: 5
+#| warning: false
+readmit <- state_2024 |>
+  filter(!is.na(ACUTE_HOSP_READMSN_PCT)) |>
+  arrange(ACUTE_HOSP_READMSN_PCT)
+
+bind_rows(head(readmit, 15), tail(readmit, 15)) |>
+  mutate(highlight = if_else(
+    ACUTE_HOSP_READMSN_PCT >= median(readmit$ACUTE_HOSP_READMSN_PCT, na.rm = TRUE),
+    "Above median", "Below median"
+  )) |>
+  ggplot(aes(x = reorder(BENE_GEO_DESC, ACUTE_HOSP_READMSN_PCT),
+             y = ACUTE_HOSP_READMSN_PCT, fill = highlight)) +
+  geom_col(width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(values = c("Above median" = "#d01c8b", "Below median" = "#4dac26")) +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "Hospital Readmission Rates by State, 2024",
+       subtitle = "Top and bottom 15 states",
+       x = NULL, y = NULL, fill = NULL) +
+  theme_medicare() +
+  theme(legend.position = "bottom")
+```
+:::
+
+:::
+
+<!-- ── CONCLUSION ───────────────────────────────────────────────────────── -->
+
+```{=html}
+<div class="conclusion">
+  <div class="conclusion-text">
+    <p class="hero-eyebrow">Conclusion</p>
+    <h1>What It All Adds Up To</h1>
+    <p class="hero-sub">
+      A decade of Medicare spending reveals not just rising costs,
+      but a healthcare system that is steadily changing how care is delivered.
+    </p>
+    <p class="hero-body">
+      A decade of Medicare data tells a remarkably consistent story. The program is still growing,
+      but the way that money is spent is changing. Care is gradually moving away from traditional
+      hospital settings and toward outpatient facilities, ambulatory surgery centers, and services
+      delivered closer to home.
+    </p>
+    <p class="hero-body">
+      Some of these changes reflect genuine progress. Advances in medical technology allow procedures
+      that once required days in a hospital to be completed in a matter of hours. Better coordination,
+      stronger payment incentives, and improved care management have helped reduce unnecessary admissions
+      and shift treatment into lower-cost settings.
+    </p>
+    <p class="hero-body">
+      Yet the data also shows that cost growth has not disappeared. Spending continues to rise, and
+      significant differences remain between states. Geography, utilization patterns, and local healthcare
+      systems still play a major role in determining how much Medicare ultimately pays for care.
+    </p>
+    <p class="hero-body">
+      For actuaries and healthcare analysts, these trends influence pricing models, reserve calculations,
+      risk forecasts, and long-term projections of healthcare spending.
+    </p>
+    <p class="conclusion-source">
+      CMS Geographic Variation Public Use File (2014-2024)
+    </p>
+  </div>
+</div>
+```
